@@ -176,7 +176,7 @@ static int do_curl(switch_event_t *event, profile_t *profile)
 			switch_curl_easy_setopt(curl_handle, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
 			switch_curl_easy_setopt(curl_handle, CURLOPT_USERPWD, profile->auth->data);
 		} else if (profile->auth->type == JWT && !zstr(profile->auth->data)) {
-			char *token = switch_mprintf("Authorization: Bearer %s", profile->auth->data);
+			char *token = switch_mprintf("Authorization: key=%s", profile->auth->data);
 			headers = switch_curl_slist_append(headers, token);
 			switch_safe_free(token);
 		}
@@ -596,12 +596,13 @@ static void add_item_to_event(switch_event_t *event, char *name, cJSON *obj)
 	switch_event_del_header(event, name);
 	if (obj->type == cJSON_String && obj->valuestring && !zstr(obj->valuestring)) {
 		switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, name, obj->valuestring);
+				switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "CARUSTO. dump_info, name = '%s', value = '%s', user= '%s'\n", name, obj->valuestring, switch_event_get_header(event, "user"));
 	}
 }
 
 static void push_event_handler(switch_event_t *event)
 {
-	char *payload = NULL, *user = NULL, *realm = NULL, *type = NULL, *uuid = NULL, *json_tokens = NULL;
+	char *payload = NULL, *payload_data = NULL, *user = NULL, *realm = NULL, *type = NULL, *uuid = NULL, *json_tokens = NULL;
 	profile_t *profile = NULL;
 	callback_t cbt = { cJSON_CreateArray() };
 	switch_bool_t res = SWITCH_FALSE;
@@ -625,10 +626,6 @@ static void push_event_handler(switch_event_t *event)
 		goto end;
 	}
 
-	if (!zstr(payload)) {
-		switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "payload", payload);
-	}
-
 	db_get_tokens_array(user, realm, type, &cbt);
 
 	if ((size = cJSON_GetArraySize(cbt.array)) == 0) {
@@ -643,6 +640,10 @@ static void push_event_handler(switch_event_t *event)
 		add_item_to_event(event, "token", cJSON_GetObjectItem(iterator, "token"));
 		add_item_to_event(event, "app_id", cJSON_GetObjectItem(iterator, "app_id"));
 		add_item_to_event(event, "platform", cJSON_GetObjectItem(iterator, "platform"));
+
+		payload_data = switch_event_expand_headers(event, payload);
+		switch_event_del_header(event, "payload");
+		switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "payload", payload_data);
 
 		res |= mod_apn_send(event, profile);
 	}
@@ -1070,7 +1071,9 @@ static switch_call_cause_t apn_wait_outgoing_channel(switch_core_session_t *sess
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "type", "voip");
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "user", user);
 			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "realm", domain);
-			switch_event_add_body(event, "{\"content-available\":true,\"custom\":[{\"name\":\"content-message\",\"value\":\"incomming call\"}]}");
+			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "cid", cid_num_override);
+			switch_event_add_header_string(event, SWITCH_STACK_BOTTOM, "cname", cid_name_override);
+			switch_event_add_body(event, "{\"to\":\"${token}\",\"priority\":\"high\",\"click_action\": \"FLUTTER_NOTIFICATION_CLICK\",\"data\":{\"caller_id\":\"${cid}\",\"caller_name\":\"${cname}\",\"uuid\":\"${uuid}\",\"has_video\":true},\"notification\":{\"content_available\": true}}");
 			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG, "CARUSTO. Fire event APN for User: %s@%s\n", user, domain);
 			switch_event_fire(&event);
 			switch_event_destroy(&event);
